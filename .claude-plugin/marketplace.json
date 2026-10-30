@@ -1,0 +1,16 @@
+{
+  "name": "tmorren",
+  "owner": {
+    "name": "tmorren"
+  },
+  "metadata": {
+    "description": "Personal Claude Code plugins"
+  },
+  "plugins": [
+    {
+      "name": "toolkit",
+      "source": "./plugins/toolkit",
+      "description": "Personal skills, including persona-based UX walkthroughs, with a shared persona library."
+    }
+  ]
+}
