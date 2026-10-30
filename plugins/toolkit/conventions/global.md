@@ -42,6 +42,13 @@ Never commit secrets, or put them into API responses, events, logs, docs or
 client bundles. Keep public client config (publishable keys, base URLs)
 clearly separate from secrets. Flag any exposure during review.
 
+## Issues and tickets
+
+Agents write tickets in the `to-tickets` format (What to build / Blocked by /
+Acceptance criteria), using GitHub's native blocking and sub-issue links,
+including in repos that have `.github/ISSUE_TEMPLATE` forms. Those forms are
+for people filing issues in GitHub's web UI.
+
 ## Pull requests
 
 If the repo has `.github/pull_request_template.md`, follow it. Otherwise:
