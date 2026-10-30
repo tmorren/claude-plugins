@@ -59,11 +59,36 @@ project in that project's `.claude/settings.json`:
 ```json
 {
   "extraKnownMarketplaces": {
-    "tmorren": { "source": { "source": "github", "repo": "tmorren/claude-plugins" } }
+    "tmorren": { "source": { "source": "github", "repo": "tmorren/claude-plugins" } },
+    "mattpocock": { "source": { "source": "github", "repo": "mattpocock/skills" } }
   },
-  "enabledPlugins": { "toolkit@tmorren": true }
+  "enabledPlugins": {
+    "toolkit@tmorren": true,
+    "mattpocock-skills@mattpocock": true
+  }
 }
 ```
+
+## Third-party plugins I use
+
+These are installed directly from their own repos rather than copied in here,
+so they stay up to date and keep their internal dependencies intact.
+
+### mattpocock-skills
+
+[mattpocock/skills](https://github.com/mattpocock/skills) (MIT): 27
+engineering and productivity skills, including grilling, spec and ticket
+flows, TDD, code review and handoff. It adds about 1.7k tokens to every session.
+
+```bash
+claude plugin marketplace add mattpocock/skills
+claude plugin install mattpocock-skills@mattpocock
+```
+
+Run `/mattpocock-skills:setup-matt-pocock-skills` once in each repo before
+using the engineering skills. It sets up the issue tracker, labels and doc
+layout. Turn on auto-update for the `mattpocock` marketplace under `/plugin` →
+Marketplaces.
 
 ## Adding a skill
 
