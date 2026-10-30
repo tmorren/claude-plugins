@@ -15,7 +15,17 @@ plugins/toolkit/
 
 | Skill | What it does |
 |---|---|
+| `/toolkit:new-skill` | Adds or changes a skill, agent, hook or global convention in this plugin, after checking every installed plugin, skill and MCP server for overlap and conflicts. Just ask "add a skill to my toolkit that…". |
 | `/toolkit:persona-walkthrough` | Sends personas through a web app or one flow, and writes a report on how it felt to each of them, with prioritised fixes. Example: `/toolkit:persona-walkthrough local "sign up and save a first recipe"` |
+
+## Global conventions
+
+`plugins/toolkit/conventions/global.md` is loaded into every session by a
+SessionStart hook, both locally and in the cloud, wherever the plugin is
+enabled. It holds rules that apply to all projects, plus the order in which
+instructions win: the user, then the repo's CLAUDE.md for project-specific
+things, then these conventions, then plugin skills. Repo `CLAUDE.md` files
+should only hold project-specific instructions.
 
 ## Personas
 
@@ -91,6 +101,9 @@ layout. Turn on auto-update for the `mattpocock` marketplace under `/plugin` →
 Marketplaces.
 
 ## Adding a skill
+
+Ask Claude to add it. The `new-skill` skill runs the overlap and conflict
+checks first. To do it by hand:
 
 1. Create `plugins/toolkit/skills/<name>/SKILL.md` with `name` and
    `description` in the frontmatter.
