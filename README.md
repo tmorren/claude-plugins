@@ -1,13 +1,20 @@
 # claude-plugins
 
 My personal Claude Code plugin marketplace. It holds one plugin, `toolkit`,
-which contains my custom skills and a shared persona library.
+which contains my custom skills and the rosters they share.
 
 ```
 .claude-plugin/marketplace.json   marketplace "tmorren"
 plugins/toolkit/
   .claude-plugin/plugin.json
-  personas/                       shared personas, readable by every skill
+  rosters.md                      how rosters load and how projects extend them
+  personas/                       roster: user personas
+  debug-lenses/                   roster: families of bug causes
+  user-states/                    roster: situations a user can be in
+  audit-lenses/                   roster: qualities a feature should have
+  design-stances/                 roster: design philosophies
+  input-setups/                   roster: devices and inputs, each used alone
+  scripts/browser.mjs             headless browser helper shared by skills
   skills/<skill-name>/SKILL.md    one folder per skill
 ```
 
@@ -17,6 +24,14 @@ plugins/toolkit/
 |---|---|
 | `/toolkit:new-skill` | Adds or changes a skill, agent, hook or global convention in this plugin, after checking every installed plugin, skill and MCP server for overlap and conflicts. Just ask "add a skill to my toolkit that…". |
 | `/toolkit:persona-walkthrough` | Sends personas through a web app or one flow, and writes a report on how it felt to each of them, with prioritised fixes. Example: `/toolkit:persona-walkthrough local "sign up and save a first recipe"` |
+| `/toolkit:bug-hypotheses` | Runs `mattpocock-skills:diagnosing-bugs`, but tests one hypothesis per debug lens in parallel, each in its own worktree, against the bug's feedback loop. Runs only when you type it. Example: `/toolkit:bug-hypotheses "scores sometimes reset after a round"` |
+| `/toolkit:repro-matrix` | Tries to reproduce a vague or intermittent web app bug in every user state at once (new or heavy account, expired session, other timezone, slow network, mobile, two tabs…), and reports which states reproduce it, plus a `repro.sh` that goes red on the bug. Example: `/toolkit:repro-matrix local "save button sometimes does nothing"` |
+| `/toolkit:feature-audit` | Audits one existing feature through lenses (states, performance, discoverability, mobile, accessibility, observability, data integrity, copy) and writes ranked improvement tickets. Example: `/toolkit:feature-audit "recipe editor" local` |
+| `/toolkit:input-walkthrough` | Checks a web game or website with each input setup on its own (Steam Deck, high-density handheld, controller on a TV, keyboard only, mouse only, touch, switching devices, and phone touch if wanted), across every menu and screen and the gameplay, or just one section. Plays with a virtual gamepad and reports a screen-by-setup matrix with screenshots. Example: `/toolkit:input-walkthrough local "pause and settings menus"` |
+| `/toolkit:design-options` | Before building, has each design stance (simplest, reuse existing, built to scale, buy or use a library, don't build it) propose an approach from the real codebase, then compares them and recommends one. Example: `/toolkit:design-options "let players rejoin a game after disconnecting"` |
+
+Every skill writes its report to `toolkit-reports/<date>-<skill>-<slug>/` in the
+project, which should be in that project's `.gitignore`.
 
 ## Global conventions
 
@@ -27,11 +42,25 @@ instructions win: the user, then the repo's CLAUDE.md for project-specific
 things, then these conventions, then plugin skills. Repo `CLAUDE.md` files
 should only hold project-specific instructions.
 
-## Personas
+## Rosters
 
-Each persona lives in `plugins/toolkit/personas/`. See that folder's
-README for the file format. A project can add or override personas in
-`.claude/personas/*.md`.
+Each skill that fans out uses a **roster**: a folder of small Markdown files,
+one per persona, lens, user state or design stance. The plugin ships defaults,
+and each project can add its own, replace a default (same `id`) or switch one off
+(`disabled: true`) in a matching folder under `.claude/`:
+
+| Roster | Defaults | Project folder |
+|---|---|---|
+| Personas | `plugins/toolkit/personas/` | `.claude/personas/` |
+| Debug lenses | `plugins/toolkit/debug-lenses/` | `.claude/debug-lenses/` |
+| User states | `plugins/toolkit/user-states/` | `.claude/user-states/` |
+| Audit lenses | `plugins/toolkit/audit-lenses/` | `.claude/audit-lenses/` |
+| Design stances | `plugins/toolkit/design-stances/` | `.claude/design-stances/` |
+| Input setups | `plugins/toolkit/input-setups/` | `.claude/input-setups/` |
+
+Each folder's README describes its file format, and
+[`plugins/toolkit/rosters.md`](plugins/toolkit/rosters.md) describes how
+loading and overriding work.
 
 ## Install
 
@@ -54,7 +83,9 @@ claude plugin marketplace update tmorren
 
 Then restart Claude Code.
 
-`persona-walkthrough` needs Playwright locally. Install it once:
+`persona-walkthrough`, `repro-matrix`, `feature-audit` and `input-walkthrough`
+need Playwright locally. Install it once, or point `PW_MODULE` at a project's
+own copy (for example a build kit's `node_modules/playwright`):
 
 ```bash
 npm i -g playwright && npx playwright install chromium
@@ -99,6 +130,16 @@ Run `/mattpocock-skills:setup-matt-pocock-skills` once in each repo before
 using the engineering skills. It sets up the issue tracker, labels and doc
 layout. Turn on auto-update for the `mattpocock` marketplace under `/plugin` →
 Marketplaces.
+
+## Testing the browser helper
+
+`plugins/toolkit/scripts/browser.mjs` has tests that drive it through its
+command line against a local page. With Playwright installed, run from the repo
+root:
+
+```bash
+node --test plugins/toolkit/scripts/browser.test.mjs
+```
 
 ## Adding a skill
 

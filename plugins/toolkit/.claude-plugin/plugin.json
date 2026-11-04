@@ -1,6 +1,6 @@
 {
   "name": "toolkit",
-  "description": "Personal skills, including persona-based UX walkthroughs, with a shared persona library.",
+  "description": "Personal skills: persona UX walkthroughs, input and device walkthroughs for games and sites, parallel bug hypotheses, multi-state bug reproduction, feature audits and design option comparisons, each with a shared roster that projects can extend.",
   "author": {
     "name": "tmorren"
   }
