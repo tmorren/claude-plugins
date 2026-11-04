@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// Persistent headless browser for persona walkthroughs.
+// Persistent headless browser shared by the toolkit's browser-driven skills
+// (persona-walkthrough, repro-matrix, feature-audit).
 //
 // Each Bash call is a separate process, so `start` launches a small background
-// server that keeps one Playwright page open, and every other command talks to
-// it over localhost. Use a different --id per persona to run several at once.
+// server that keeps one Playwright browser open, and every other command talks
+// to it over localhost. Use a different --id per agent to run several at once.
 //
 //   node browser.mjs start <url> --id <id> [--device desktop|mobile] [--zoom 2]
+//        [--locale de-DE] [--timezone Pacific/Auckland] [--network slow|offline]
+//        [--storage-state <file>]          (start with saved cookies/localStorage)
 //   node browser.mjs snapshot            --id <id>
 //   node browser.mjs click <ref|text>    --id <id>
 //   node browser.mjs fill <ref> <text>   --id <id>
@@ -16,11 +19,18 @@
 //   node browser.mjs back                --id <id>
 //   node browser.mjs reload              --id <id>
 //   node browser.mjs screenshot <path> [--full] --id <id>   (viewport only unless --full)
+//   node browser.mjs network <normal|slow|offline> --id <id>
+//   node browser.mjs tab new [url]       --id <id>   (opens a second tab, same session)
+//   node browser.mjs tab <n>             --id <id>   (switch to tab n, from 1)
+//   node browser.mjs tabs                --id <id>   (list open tabs)
+//   node browser.mjs clear-cookies       --id <id>   (simulates an expired session)
+//   node browser.mjs save-state <file>   --id <id>   (save cookies/localStorage)
 //   node browser.mjs stop                --id <id>
 //
 // Every action prints a fresh snapshot: URL, title, the focused element, visible
 // text, a numbered list of interactive elements ([ref] role "name"), console
 // errors since the last command, and a note when an action changed nothing.
+// "slow" network is roughly 3G: 400ms latency, about 400 kbit/s down.
 
 import { createRequire } from 'node:module';
 import { execSync, spawn } from 'node:child_process';
@@ -175,19 +185,57 @@ async function runServer(id, url, flags) {
       deviceScaleFactor: zoom,
     };
   }
+  if (flags.locale) ctxOpts.locale = String(flags.locale);
+  if (flags.timezone) ctxOpts.timezoneId = String(flags.timezone);
+  if (flags['storage-state']) ctxOpts.storageState = String(flags['storage-state']);
   const context = await browser.newContext(ctxOpts);
-  const page = await context.newPage();
-  const consoleErrors = [];
-  page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 200)); });
-  page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 200)));
-  page.on('dialog', (d) => d.dismiss().catch(() => {}));
 
-  let lastSnap = '';
+  const consoleErrors = [];
+  const pages = [];
+  let network = 'normal';
+  const SLOW = { offline: false, latency: 400, downloadThroughput: 50 * 1024, uploadThroughput: 20 * 1024 };
+  const FAST = { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
+  const throttle = async (p) => {
+    const cdp = await context.newCDPSession(p);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', network === 'slow' ? SLOW : FAST);
+  };
+  const setNetwork = async (mode) => {
+    if (!['normal', 'slow', 'offline'].includes(mode)) throw new Error('network must be normal, slow or offline');
+    network = mode;
+    await context.setOffline(mode === 'offline');
+    for (const p of pages) await throttle(p);
+  };
+  const addPage = async () => {
+    const p = await context.newPage();
+    p.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 200)); });
+    p.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 200)));
+    p.on('dialog', (d) => d.dismiss().catch(() => {}));
+    pages.push(p);
+    if (network === 'slow') await throttle(p);
+    return p;
+  };
+
+  let page = await addPage();
   const t0 = Date.now();
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await settle(page);
   const firstLoadMs = Date.now() - t0;
-  lastSnap = await snapshot(page);
+  // Apply network conditions after the first load, so a failed first load
+  // can't stop the browser from starting. `start` then reloads under them.
+  if (flags.network && flags.network !== 'normal') {
+    await setNetwork(String(flags.network));
+    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    await settle(page);
+  }
+  const header = async () => {
+    const lines = [];
+    if (pages.length > 1) lines.push(`Tab: ${pages.indexOf(page) + 1} of ${pages.length}`);
+    if (network !== 'normal') lines.push(`Network: ${network}`);
+    return lines.length ? lines.join('\n') + '\n' : '';
+  };
+  const snap = async () => (await header()) + await snapshot(page);
+  let lastSnap = await snap();
 
   const handlers = {
     snapshot: async () => {},
@@ -214,7 +262,28 @@ async function runServer(id, url, flags) {
       await page.screenshot({ path: p, fullPage: !!f.full });
       return `Saved screenshot: ${path.resolve(p)}`;
     },
+    network: async ([mode]) => setNetwork(mode),
+    tab: async ([which, u]) => {
+      if (which === 'new') {
+        page = await addPage();
+        if (u) await page.goto(u, { waitUntil: 'domcontentloaded' });
+        return;
+      }
+      const n = Number(which);
+      if (!pages[n - 1]) throw new Error(`No tab ${which}. Open tabs: ${pages.length}`);
+      page = pages[n - 1];
+      await page.bringToFront();
+    },
+    tabs: async () => pages.map((p, i) => `${p === page ? '*' : ' '} [${i + 1}] ${p.url()}`).join('\n'),
+    'clear-cookies': async () => context.clearCookies(),
+    'save-state': async ([p]) => {
+      fs.mkdirSync(path.dirname(path.resolve(p)), { recursive: true });
+      await context.storageState({ path: p });
+      return `Saved storage state: ${path.resolve(p)}`;
+    },
   };
+  // Commands that return their own text instead of a fresh snapshot.
+  const noSnapshot = new Set(['screenshot', 'tabs', 'save-state']);
 
   const server = http.createServer(async (req, res) => {
     let body = '';
@@ -233,21 +302,21 @@ async function runServer(id, url, flags) {
       const started = Date.now();
       const result = await h(args, f);
       const note = typeof result === 'string' ? result : '';
-      if (cmd !== 'snapshot' && cmd !== 'screenshot') await settle(page);
+      if (cmd !== 'snapshot' && !noSnapshot.has(cmd)) await settle(page);
       const took = Date.now() - started;
-      if (cmd === 'screenshot') out = note;
+      if (noSnapshot.has(cmd)) out = note;
       else {
-        const snap = await snapshot(page);
+        const current = await snap();
         // Ignore focus: clicking a no-op button still moves focus onto it.
         const sansFocus = (t) => t.replace(/^Focused: .*$/m, '');
-        const unchanged = cmd !== 'snapshot' && sansFocus(snap) === sansFocus(lastSnap);
-        lastSnap = snap;
-        out = `(${cmd} took ${took}ms)` + (unchanged ? ' NOTE: nothing on the page changed.' : '') + '\n' + snap;
+        const unchanged = !['snapshot', 'network', 'clear-cookies'].includes(cmd) && sansFocus(current) === sansFocus(lastSnap);
+        lastSnap = current;
+        out = `(${cmd} took ${took}ms)` + (unchanged ? ' NOTE: nothing on the page changed.' : '') + '\n' + current;
       }
     } catch (e) {
-      out = `ERROR: ${e.message.split('\n')[0]}\n\n` + await snapshot(page).catch(() => '');
+      out = `ERROR: ${e.message.split('\n')[0]}\n\n` + await snap().catch(() => '');
     }
-    if (cmd !== 'screenshot') {
+    if (!noSnapshot.has(cmd)) {
       out += consoleErrors.length
         ? `\n\n--- Console errors since last command ---\n${consoleErrors.splice(0).join('\n')}`
         : '\n\nConsole errors: none';
@@ -288,17 +357,25 @@ async function main() {
 
   if (!cmd || cmd === 'help' || cmd === '--help') {
     const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
-    console.log(src.split('\n').slice(1, 22).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+    const lines = src.split('\n').slice(1);
+    const end = lines.findIndex((l) => !l.startsWith('//'));
+    console.log(lines.slice(0, end).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
     return;
   }
 
   if (cmd === 'start') {
     if (!positional[0]) { console.error('Usage: start <url> --id <id>'); process.exit(1); }
     if (fs.existsSync(stateFile(id))) await send(id, { cmd: 'stop' }).catch(() => fs.rmSync(stateFile(id), { force: true }));
+    // The background server writes errors to a log file rather than this
+    // process's stderr, so callers that wait for output pipes to close don't hang.
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    const logFile = path.join(STATE_DIR, `${id}.log`);
+    const log = fs.openSync(logFile, 'w');
     const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '__serve', ...process.argv.slice(3)], {
       detached: true,
-      stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+      stdio: ['ignore', 'ignore', log, 'ipc'],
     });
+    fs.closeSync(log);
     const timer = setTimeout(() => { console.error('Browser did not start within 60s.'); process.exit(1); }, 60000);
     child.on('message', (m) => {
       clearTimeout(timer);
@@ -307,7 +384,11 @@ async function main() {
       child.unref();
       process.exit(0);
     });
-    child.on('exit', (code) => { console.error(`Browser process exited (code ${code}).`); process.exit(1); });
+    child.on('exit', (code) => {
+      const details = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').trim() : '';
+      console.error(`Browser process exited (code ${code}).${details ? '\n' + details : ''}`);
+      process.exit(code === 2 ? 2 : 1);
+    });
     return;
   }
 

@@ -34,17 +34,16 @@ can't sensibly infer.
 
 ## 2. Load the personas
 
-1. Read every `*.md` in `${CLAUDE_PLUGIN_ROOT}/personas/` except `README.md`.
-2. Read every `*.md` in the project's `.claude/personas/`, if it exists. A
-   project persona with the same `id` replaces the shared one.
-3. Replace `{{product_purpose}}` and `{{scope}}` in each chosen persona.
+1. Load the persona roster as described in `${CLAUDE_PLUGIN_ROOT}/rosters.md`
+   (`personas/`, plus the project's `.claude/personas/`).
+2. Replace `{{product_purpose}}` and `{{scope}}` in each chosen persona.
 
 ## 3. Check the browser is available
 
 For `playwright` mode, run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/persona-walkthrough/scripts/browser.mjs" help
+node "${CLAUDE_PLUGIN_ROOT}/scripts/browser.mjs" help
 ```
 
 If it reports that Playwright is missing, tell the user to run
@@ -52,8 +51,8 @@ If it reports that Playwright is missing, tell the user to run
 
 ## 4. Run one subagent per persona
 
-Pick an output folder: `persona-reports/<YYYY-MM-DD>-<scope-slug>/` in the
-project root. Each persona gets a `screens/<persona-id>/` subfolder.
+Pick an output folder: `toolkit-reports/<YYYY-MM-DD>-persona-walkthrough-<scope-slug>/`
+in the project root. Each persona gets a `screens/<persona-id>/` subfolder.
 
 **Playwright mode:** launch every persona's subagent in a single message so
 they run in parallel. **Chrome mode:** run them one after another, because they
@@ -70,7 +69,7 @@ pasted in full and the placeholders filled.
 > **Browser:** use this helper. Every action prints a fresh snapshot with the
 > visible text and numbered interactive elements. Use the numbers as refs.
 > ```
-> B="${CLAUDE_PLUGIN_ROOT}/skills/persona-walkthrough/scripts/browser.mjs"
+> B="${CLAUDE_PLUGIN_ROOT}/scripts/browser.mjs"
 > node "$B" start <url> --id <persona-id> --device <desktop|mobile> [--zoom 2]
 > node "$B" click <ref|visible text> --id <persona-id>
 > node "$B" fill <ref> <text> --id <persona-id>
@@ -133,6 +132,6 @@ and save it as `<output folder>/report.md`. When synthesising across personas:
 ## 6. Finish
 
 1. Stop any browsers that are still running, and the dev server if you started it.
-2. If `persona-reports/` isn't in the project's `.gitignore`, offer to add it.
+2. If `toolkit-reports/` isn't in the project's `.gitignore`, offer to add it.
 3. In chat, give a short summary: each persona's outcome in one line, the top 3
    fixes, and the path to the report.

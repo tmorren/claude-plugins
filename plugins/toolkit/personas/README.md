@@ -6,8 +6,8 @@ from `${CLAUDE_PLUGIN_ROOT}/personas/`.
 ## Overriding or adding personas per project
 
 A project can add its own personas, or replace these ones, by putting files in
-`.claude/personas/*.md` in the project. If a project file has the same `id` as
-a file here, the project version wins.
+`.claude/personas/*.md` in the project. Loading and overriding work the same
+way for every roster; see [`../rosters.md`](../rosters.md).
 
 ## File format
 
