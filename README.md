@@ -13,6 +13,7 @@ plugins/toolkit/
   user-states/                    roster: situations a user can be in
   audit-lenses/                   roster: qualities a feature should have
   design-stances/                 roster: design philosophies
+  input-setups/                   roster: devices and inputs, each used alone
   scripts/browser.mjs             headless browser helper shared by skills
   skills/<skill-name>/SKILL.md    one folder per skill
 ```
@@ -26,6 +27,7 @@ plugins/toolkit/
 | `/toolkit:bug-hypotheses` | Runs `mattpocock-skills:diagnosing-bugs`, but tests one hypothesis per debug lens in parallel, each in its own worktree, against the bug's feedback loop. Runs only when you type it. Example: `/toolkit:bug-hypotheses "scores sometimes reset after a round"` |
 | `/toolkit:repro-matrix` | Tries to reproduce a vague or intermittent web app bug in every user state at once (new or heavy account, expired session, other timezone, slow network, mobile, two tabs…), and reports which states reproduce it, plus a `repro.sh` that goes red on the bug. Example: `/toolkit:repro-matrix local "save button sometimes does nothing"` |
 | `/toolkit:feature-audit` | Audits one existing feature through lenses (states, performance, discoverability, mobile, accessibility, observability, data integrity, copy) and writes ranked improvement tickets. Example: `/toolkit:feature-audit "recipe editor" local` |
+| `/toolkit:input-walkthrough` | Checks a web game or website with each input setup on its own (Steam Deck, high-density handheld, controller on a TV, keyboard only, mouse only, touch, switching devices, and phone touch if wanted), across every menu and screen and the gameplay, or just one section. Plays with a virtual gamepad and reports a screen-by-setup matrix with screenshots. Example: `/toolkit:input-walkthrough local "pause and settings menus"` |
 | `/toolkit:design-options` | Before building, has each design stance (simplest, reuse existing, built to scale, buy or use a library, don't build it) propose an approach from the real codebase, then compares them and recommends one. Example: `/toolkit:design-options "let players rejoin a game after disconnecting"` |
 
 Every skill writes its report to `toolkit-reports/<date>-<skill>-<slug>/` in the
@@ -54,6 +56,7 @@ and each project can add its own, replace a default (same `id`) or switch one of
 | User states | `plugins/toolkit/user-states/` | `.claude/user-states/` |
 | Audit lenses | `plugins/toolkit/audit-lenses/` | `.claude/audit-lenses/` |
 | Design stances | `plugins/toolkit/design-stances/` | `.claude/design-stances/` |
+| Input setups | `plugins/toolkit/input-setups/` | `.claude/input-setups/` |
 
 Each folder's README describes its file format, and
 [`plugins/toolkit/rosters.md`](plugins/toolkit/rosters.md) describes how
@@ -80,8 +83,9 @@ claude plugin marketplace update tmorren
 
 Then restart Claude Code.
 
-`persona-walkthrough`, `repro-matrix` and `feature-audit` need Playwright
-locally. Install it once:
+`persona-walkthrough`, `repro-matrix`, `feature-audit` and `input-walkthrough`
+need Playwright locally. Install it once, or point `PW_MODULE` at a project's
+own copy (for example a build kit's `node_modules/playwright`):
 
 ```bash
 npm i -g playwright && npx playwright install chromium

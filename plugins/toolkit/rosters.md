@@ -11,6 +11,7 @@ stance. The plugin ships defaults, and each project can add or replace entries.
 | User states | `user-states/` | `.claude/user-states/` | `repro-matrix` |
 | Audit lenses | `audit-lenses/` | `.claude/audit-lenses/` | `feature-audit` |
 | Design stances | `design-stances/` | `.claude/design-stances/` | `design-options` |
+| Input setups | `input-setups/` | `.claude/input-setups/` | `input-walkthrough` |
 
 Each folder's `README.md` describes its file format.
 
@@ -20,7 +21,11 @@ Each folder's `README.md` describes its file format.
 2. Read every `*.md` in the project's `<project folder>`, if it exists.
 3. Key entries by their frontmatter `id`. A project entry with the same `id`
    replaces the default one. A project entry with a new `id` is added.
-4. A project entry with `disabled: true` in its frontmatter removes the default
+4. If a project skill that wraps a toolkit skill names an **extra roster
+   folder** (for example one inside its own skill folder, so a kit that syncs
+   skills can ship it), read that too, after the project folder. Entries there
+   override the same way.
+5. A project entry with `disabled: true` in its frontmatter removes the default
    with that `id`. Use this when a default lens or state makes no sense for the
    project, such as `mobile` for a CLI tool.
 

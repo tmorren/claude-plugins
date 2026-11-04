@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // Persistent headless browser shared by the toolkit's browser-driven skills
-// (persona-walkthrough, repro-matrix, feature-audit).
+// (persona-walkthrough, repro-matrix, feature-audit, input-walkthrough).
 //
 // Each Bash call is a separate process, so `start` launches a small background
 // server that keeps one Playwright browser open, and every other command talks
 // to it over localhost. Use a different --id per agent to run several at once.
 //
 //   node browser.mjs start <url> --id <id> [--device desktop|mobile] [--zoom 2]
+//        [--viewport 1280x800] [--dpr 2] [--touch]   (custom screen; --touch adds a touchscreen)
+//        [--gamepad]                       (a virtual standard gamepad, connected at start)
+//        [--webgl]                         (software WebGL for 3D/WebGL games only: it slows 2D canvas)
 //        [--locale de-DE] [--timezone Pacific/Auckland] [--network slow|offline]
 //        [--storage-state <file>]          (start with saved cookies/localStorage)
 //   node browser.mjs snapshot            --id <id>
@@ -25,12 +28,27 @@
 //   node browser.mjs tabs                --id <id>   (list open tabs)
 //   node browser.mjs clear-cookies       --id <id>   (simulates an expired session)
 //   node browser.mjs save-state <file>   --id <id>   (save cookies/localStorage)
+//   node browser.mjs pad press <button> [ms]          --id <id>   (default 120ms)
+//   node browser.mjs pad hold <button> <ms>           --id <id>
+//   node browser.mjs pad stick <left|right> <x> <y> <ms> --id <id>   (x, y from -1 to 1)
+//   node browser.mjs pad connect | pad disconnect     --id <id>
+//   node browser.mjs key down|up <key>   --id <id>   (hold a key across commands)
+//   node browser.mjs key hold <key> <ms> --id <id>
+//   node browser.mjs mouse <x> <y> [move|click|right] --id <id>   (CSS pixels; default click)
+//   node browser.mjs tap <x> <y>         --id <id>   (touch tap, CSS pixels; needs --touch or mobile)
+//   node browser.mjs wait <ms>           --id <id>   (let the page run, then snapshot)
+//   node browser.mjs eval <expression>   --id <id>   (prints the result as JSON)
 //   node browser.mjs stop                --id <id>
 //
 // Every action prints a fresh snapshot: URL, title, the focused element, visible
 // text, a numbered list of interactive elements ([ref] role "name"), console
 // errors since the last command, and a note when an action changed nothing.
-// "slow" network is roughly 3G: 400ms latency, about 400 kbit/s down.
+// Canvas games show little in a snapshot: take screenshots and look at them.
+// The page keeps running between commands (games included), so pause a game
+// before stopping to think, or it carries on without you.
+// Gamepad buttons: a b x y lb rb lt rt select start ls rs up down left right home
+// (standard mapping). "slow" network is roughly 3G: 400ms latency, ~400 kbit/s.
+// Set PW_MODULE to a Playwright package folder to use a project's own copy.
 
 import { createRequire } from 'node:module';
 import { execSync, spawn } from 'node:child_process';
@@ -60,7 +78,12 @@ function parseArgs(argv) {
 
 function loadPlaywright() {
   const require = createRequire(import.meta.url);
+  if (process.env.PW_MODULE) {
+    try { return require(path.resolve(process.env.PW_MODULE)); }
+    catch { console.error(`PW_MODULE is set, but no Playwright was found at ${process.env.PW_MODULE}`); process.exit(2); }
+  }
   try { return require('playwright'); } catch {}
+  try { return createRequire(path.join(process.cwd(), 'package.json'))('playwright'); } catch {}
   try {
     const globalRoot = execSync('npm root -g', { encoding: 'utf8' }).trim();
     return require(path.join(globalRoot, 'playwright'));
@@ -171,12 +194,18 @@ async function settle(page) {
 async function runServer(id, url, flags) {
   const { chromium, devices } = loadPlaywright();
   const launchOpts = process.env.PW_EXECUTABLE_PATH ? { executablePath: process.env.PW_EXECUTABLE_PATH } : {};
+  launchOpts.args = ['--autoplay-policy=no-user-gesture-required'];
+  if (flags.webgl) launchOpts.args.push('--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist');
   const browser = await chromium.launch(launchOpts);
 
   const zoom = Number(flags.zoom) || 1;
   let ctxOpts;
   if (flags.device === 'mobile') {
     ctxOpts = { ...devices['iPhone 13'] };
+  } else if (flags.viewport) {
+    const [width, height] = String(flags.viewport).split('x').map(Number);
+    if (!width || !height) throw new Error('--viewport must look like 1280x800');
+    ctxOpts = { viewport: { width, height }, deviceScaleFactor: Number(flags.dpr) || 1 };
   } else {
     // Zoom is simulated by shrinking the CSS viewport and scaling pixels up,
     // which is how browser zoom affects layout (e.g. 200% on 1280px = 640px).
@@ -185,10 +214,50 @@ async function runServer(id, url, flags) {
       deviceScaleFactor: zoom,
     };
   }
+  if (flags.dpr && flags.device !== 'mobile') ctxOpts.deviceScaleFactor = Number(flags.dpr);
+  if (flags.touch) ctxOpts.hasTouch = true;
   if (flags.locale) ctxOpts.locale = String(flags.locale);
   if (flags.timezone) ctxOpts.timezoneId = String(flags.timezone);
   if (flags['storage-state']) ctxOpts.storageState = String(flags['storage-state']);
   const context = await browser.newContext(ctxOpts);
+
+  // A virtual standard-mapping gamepad. It replaces navigator.getGamepads in
+  // every page, so headless games see a controller; `pad` commands change its
+  // state. It starts connected with --gamepad, otherwise disconnected.
+  let gamepadUsed = !!flags.gamepad;
+  await context.addInitScript((connected) => {
+    const state = { connected, buttons: new Array(17).fill(0), axes: [0, 0, 0, 0], t0: performance.now() };
+    const snapshotPad = () => ({
+      id: 'Virtual gamepad (STANDARD GAMEPAD Vendor: 045e Product: 028e)',
+      index: 0, connected: true, mapping: 'standard', timestamp: performance.now() - state.t0,
+      axes: [...state.axes],
+      buttons: state.buttons.map((v) => ({ pressed: v > 0.5, touched: v > 0, value: v })),
+      vibrationActuator: { playEffect: async () => 'complete', reset: async () => 'complete' },
+    });
+    Object.defineProperty(Navigator.prototype, 'getGamepads', {
+      configurable: true,
+      value: () => [state.connected ? snapshotPad() : null, null, null, null],
+    });
+    const fire = (type) => window.dispatchEvent(Object.assign(new Event(type), { gamepad: snapshotPad() }));
+    window.__virtualPad = {
+      state,
+      set(buttons, axes) {
+        if (buttons) for (const [i, v] of Object.entries(buttons)) state.buttons[i] = v;
+        if (axes) for (const [i, v] of Object.entries(axes)) state.axes[i] = v;
+      },
+      connect() { if (!state.connected) { state.connected = true; fire('gamepadconnected'); } },
+      disconnect() { if (state.connected) { state.connected = false; fire('gamepaddisconnected'); } },
+    };
+    if (connected) addEventListener('load', () => setTimeout(() => fire('gamepadconnected'), 50));
+  }, !!flags.gamepad);
+  const PAD_BUTTONS = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, select: 8, back: 8, view: 8,
+    start: 9, menu: 9, ls: 10, rs: 11, up: 12, down: 13, left: 14, right: 15, home: 16 };
+  const padButton = (name) => {
+    const i = PAD_BUTTONS[String(name).toLowerCase()];
+    if (i === undefined) throw new Error(`Unknown gamepad button "${name}". Use: ${Object.keys(PAD_BUTTONS).join(' ')}`);
+    return i;
+  };
+  const padSet = (buttons, axes) => page.evaluate(([b, a]) => window.__virtualPad.set(b, a), [buttons, axes]);
 
   const consoleErrors = [];
   const pages = [];
@@ -232,6 +301,16 @@ async function runServer(id, url, flags) {
     const lines = [];
     if (pages.length > 1) lines.push(`Tab: ${pages.indexOf(page) + 1} of ${pages.length}`);
     if (network !== 'normal') lines.push(`Network: ${network}`);
+    if (gamepadUsed) {
+      const on = await page.evaluate(() => window.__virtualPad?.state.connected).catch(() => false);
+      lines.push(`Gamepad: ${on ? 'connected' : 'disconnected'}`);
+    }
+    const canvas = await page.evaluate(() => {
+      const c = [...document.querySelectorAll('canvas')].map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width * r.height > innerWidth * innerHeight * 0.25)[0];
+      return c && `Canvas: ${Math.round(c.width)}x${Math.round(c.height)} at ${Math.round(c.left)},${Math.round(c.top)} (CSS px) - use screenshots to see it`;
+    }).catch(() => null);
+    if (canvas) lines.push(canvas);
     return lines.length ? lines.join('\n') + '\n' : '';
   };
   const snap = async () => (await header()) + await snapshot(page);
@@ -260,7 +339,47 @@ async function runServer(id, url, flags) {
     screenshot: async ([p], f) => {
       fs.mkdirSync(path.dirname(path.resolve(p)), { recursive: true });
       await page.screenshot({ path: p, fullPage: !!f.full });
-      return `Saved screenshot: ${path.resolve(p)}`;
+      const vp = page.viewportSize();
+      const dpr = ctxOpts.deviceScaleFactor || 1;
+      return `Saved screenshot: ${path.resolve(p)} (viewport ${vp.width}x${vp.height} CSS px` +
+        (dpr !== 1 ? `, image is ${dpr}x larger: divide image pixels by ${dpr} for mouse/tap coordinates)` : ')');
+    },
+    pad: async ([action, a1, a2, a3, a4]) => {
+      gamepadUsed = true;
+      const ms = (v, d) => (v === undefined ? d : Number(v));
+      if (action === 'connect') return page.evaluate(() => window.__virtualPad.connect());
+      if (action === 'disconnect') return page.evaluate(() => window.__virtualPad.disconnect());
+      if (action === 'press' || action === 'hold') {
+        const i = padButton(a1);
+        await padSet({ [i]: 1 });
+        await page.waitForTimeout(ms(a2, action === 'press' ? 120 : 500));
+        return padSet({ [i]: 0 });
+      }
+      if (action === 'stick') {
+        const base = a1 === 'right' ? 2 : a1 === 'left' ? 0 : -1;
+        if (base < 0) throw new Error('pad stick needs left or right');
+        await padSet(null, { [base]: Number(a2) || 0, [base + 1]: Number(a3) || 0 });
+        await page.waitForTimeout(ms(a4, 300));
+        return padSet(null, { [base]: 0, [base + 1]: 0 });
+      }
+      throw new Error('pad needs press, hold, stick, connect or disconnect');
+    },
+    key: async ([action, k, t]) => {
+      if (action === 'down') return page.keyboard.down(k);
+      if (action === 'up') return page.keyboard.up(k);
+      if (action === 'hold') { await page.keyboard.down(k); await page.waitForTimeout(Number(t) || 500); return page.keyboard.up(k); }
+      throw new Error('key needs down, up or hold');
+    },
+    mouse: async ([x, y, how = 'click']) => {
+      if (how === 'move') return page.mouse.move(Number(x), Number(y));
+      return page.mouse.click(Number(x), Number(y), { button: how === 'right' ? 'right' : 'left' });
+    },
+    tap: async ([x, y]) => page.touchscreen.tap(Number(x), Number(y)),
+    wait: async ([t]) => page.waitForTimeout(Number(t) || 1000),
+    eval: async (parts) => {
+      // Playwright evaluates a string as an expression, outside the page's CSP.
+      const v = await page.evaluate(parts.join(' '));
+      return v === undefined ? 'undefined' : JSON.stringify(v, null, 2);
     },
     network: async ([mode]) => setNetwork(mode),
     tab: async ([which, u]) => {
@@ -283,7 +402,7 @@ async function runServer(id, url, flags) {
     },
   };
   // Commands that return their own text instead of a fresh snapshot.
-  const noSnapshot = new Set(['screenshot', 'tabs', 'save-state']);
+  const noSnapshot = new Set(['screenshot', 'tabs', 'save-state', 'eval']);
 
   const server = http.createServer(async (req, res) => {
     let body = '';
@@ -309,7 +428,9 @@ async function runServer(id, url, flags) {
         const current = await snap();
         // Ignore focus: clicking a no-op button still moves focus onto it.
         const sansFocus = (t) => t.replace(/^Focused: .*$/m, '');
-        const unchanged = !['snapshot', 'network', 'clear-cookies'].includes(cmd) && sansFocus(current) === sansFocus(lastSnap);
+        // On a canvas page the text can't show change, so only screenshots can tell.
+        const unchanged = !['snapshot', 'network', 'clear-cookies', 'wait'].includes(cmd) &&
+          !/^Canvas: /m.test(current) && sansFocus(current) === sansFocus(lastSnap);
         lastSnap = current;
         out = `(${cmd} took ${took}ms)` + (unchanged ? ' NOTE: nothing on the page changed.' : '') + '\n' + current;
       }
