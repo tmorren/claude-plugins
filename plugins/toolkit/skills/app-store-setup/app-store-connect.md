@@ -19,8 +19,8 @@ Work top to bottom. Items marked **(declaration)** follow the guardrail in `SKIL
 
 ## 4. API key for CI
 
-- Users and Access → **Integrations** → App Store Connect API → Team Keys → **+**, role **App Manager**. The `.p8` downloads **once**. Put it straight into CI with the Key ID and Issuer ID (for example `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID`), then delete the file.
-- The CI job archives with `xcodebuild archive … -allowProvisioningUpdates -authenticationKeyPath … DEVELOPMENT_TEAM=<TeamID> CODE_SIGN_STYLE=Automatic`, and exports with an `ExportOptions.plist` of `method` `app-store-connect`, `destination` `upload`. That upload *is* the TestFlight build.
+- Users and Access → **Integrations** → App Store Connect API: the first time, **Request Access** (an API terms agreement, **(declaration)**; approved at once for an organization). Then Team Keys → **+**, role **Admin**: cloud signing only creates the distribution certificate for an Admin key (an App Manager key fails at archive with "no devices" / "no profiles"). The `.p8` downloads **once**. Put it straight into CI with the Key ID and Issuer ID (for example `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID`), then delete the file.
+- The CI job archives with `xcodebuild archive … -allowProvisioningUpdates -authenticationKeyPath … DEVELOPMENT_TEAM=<TeamID> CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Distribution"` (without the identity an archive signs for development, which needs a registered device), and exports with an `ExportOptions.plist` of `method` `app-store-connect`, `destination` `upload`. That upload *is* the TestFlight build.
 - Build numbers must grow on every upload; derive them from the version (for example `major*1000000 + minor*1000 + patch`).
 - macOS runners can sit unassigned ("job was not acquired by Runner") and cost ten times Linux minutes.
 
